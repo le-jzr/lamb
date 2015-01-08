@@ -1,0 +1,53 @@
+
+// Define the define.
+__extern "__define" 2 "define" !(__extern "__define" 2);
+
+define "pair" (\x \y \f f x y);
+define "fst" (\x \y x);
+define "snd" (\x ());
+
+define "true" !(fst);
+define "false" !(snd);
+define "ite" (\x \y \z x y z);
+
+define "cons" (\x \y (pair true (pair x y)));
+define "nil" !(pair false ());
+define "is_nil" !(fst);
+define "head" (\x __fst (__snd x));
+define "tail" (\x __snd (__snd x));
+
+define "load" !(__extern "__load" 1);
+
+define "+" !(__extern "__int_plus" 2);
+define "-" !(__extern "__int_minus" 2);
+define "*" !(__extern "__int_multiply" 2);
+define "/" !(__extern "__int_divide" 2);
+define "print" !(__extern "__print" 1);
+
+define "true" !(__extern "__true" 0);
+define "false" !(__extern "__false" 0);
+define "_ite" !(__extern "__ite" 3);
+define "ite" (\!x _ite x);
+
+define "fact" (\x ite (<= x 0) 1 (* x (fact (- x 1))));
+
+define "infinilist" (\x \y cons x (infinilist (y x) y));
+
+define "seq" (infinilist 0 (+ 1));
+
+define "first" (\x \y ite (or (<= x 0) (is_nil y)) nil (cons (head y) (first (- x 1) (tail y))));
+
+
+define "lambda" !(__extern "__lambda" 1);
+define "n2str" !(__extern "__n2str" 1);
+define "str2n" !(__extern "__str2n" 1);
+
+define "if" (\cond \_ \tt \_ \ff ite cond tt ff);
+
+define "church-combinator" (\f (\x f (x x)) (\x f (x x)));
+define "let"    (\x \_ \y \_ \z lambda (n2str x) z y);
+define "letrec" (\x \_ \y \_ \z lambda (n2str x) z (church-combinator (lambda (n2str x) y)));
+
+letrec fact2 = (\!x \!y if (<= y 0) then x else (fact2 (* x y) (- y 1))) in (define "fact" (\x fact2 1 x));
+
+print (first 10 seq);

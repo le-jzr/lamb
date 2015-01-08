@@ -1,229 +1,403 @@
-
-// Define the define.
-__extern "__define" 2 "define" !(__extern "__define" 2);
-
-define "pair" (\x \y \f f x y);
-define "fst" (\x \y x);
-define "snd" (\x ());
-
-define "true" !(fst);
-define "false" !(snd);
-define "ite" (\x \y \z x y z);
-
-define "cons" (\x \y (pair true (pair x y)));
-define "nil" !(pair false ());
-define "is_nil" !(fst);
-define "head" (\x __fst (__snd x));
-define "tail" (\x __snd (__snd x));
-
-define "load" !(__extern "__load" 1);
-
-define "+" !(__extern "__int_plus" 2);
-define "-" !(__extern "__int_minus" 2);
-define "*" !(__extern "__int_multiply" 2);
-define "/" !(__extern "__int_divide" 2);
-define "print" !(__extern "__print" 1);
-
-define "true" !(__extern "__true" 0);
-define "false" !(__extern "__false" 0);
-define "_ite" !(__extern "__ite" 3);
-define "ite" (\!x _ite x);
-
-define "fact" (\x ite (<= x 0) 1 (* x (fact (- x 1))));
-
-define "infinilist" (\x \y cons x (infinilist (y x) y));
-
-define "seq" (infinilist 0 (+ 1));
-
-define "first" (\x \y ite (or (<= x 0) (is_nil y)) nil (cons (head y) (first (- x 1) (tail y))));
-
-
-define "lambda" !(__extern "__lambda" 1);
-define "n2str" !(__extern "__n2str" 1);
-define "str2n" !(__extern "__str2n" 1);
-
-define "if" (\cond \_ \tt \_ \ff ite cond tt ff);
-
-define "church-combinator" (\f (\x f (x x)) (\x f (x x)));
-define "let"    (\x \_ \y \_ \z lambda (n2str x) z y);
-define "letrec" (\x \_ \y \_ \z lambda (n2str x) z (church-combinator (lambda (n2str x) y)));
-
-letrec fact2 = (\!x \!y if (<= y 0) then x else (fact2 (* x y) (- y 1))) in (define "fact" (\x fact2 1 x));
-
-print (first 10 seq);
-
+package main
 
 type Expression interface {
 	Substitute(name string, value Expression) Expression
+	Reduce() (Expression, bool)
+	FullReduce() (Expression, bool)
 }
 
-type BuiltinFunction int
-const (
-	_FORCE_EVAL = BuiltinFunction(iota)
-)
+// Pseudo function that is used to interpret '!' for strict evaluation.
+type ForceEval struct {
+}
 
-type ExternalFuncCall = struct {
-	args_given int
+func (e ForceEval) Substitute(name string, value Expression) Expression {
+	return e
+}
+
+func (e ForceEval) Reduce() (Expression, bool) {
+	return e, false
+}
+
+func (e ForceEval) FullReduce() (Expression, bool) {
+	return e, false
+}
+
+type ExternalFuncCall struct {
+	args_given     int
 	args_remaining int
-	
+
 	func_name string
-	args []Expression
+	args      []Expression
+}
+
+func (e *ExternalFuncCall) Substitute(name string, value Expression) Expression {
+	// TODO: this can be optimized by using string table and free variable bitmap.
+
+	nargs := make([]Expression, len(e.args))
+	for i := range e.args {
+		nargs[i] = substitute(e.args[i], name, val)
+	}
+	return &ExternalFuncCall{e.args_given, e.args_remaining, e.func_name, nargs}
+}
+
+func (e *ExternalFuncCall) Reduce() (Expression, bool) {
+	if args_given < 2 || args_remaining > 0 {
+		// Incomplete call.
+		return e, false
+	}
+
+	// Complete call.
+	return callExternal(func_name, args...), true
+}
+
+func (e *ExternalFuncCall) FullReduce() (Expression, bool) {
+	result, ok := e.Reduce()
+	if ok {
+		reduced_result, _ := fullReduce(result)
+		return reduced_result, true
+	} else {
+		return e, false
+	}
+}
+
+type Int struct {
+	value uint64
+}
+
+func (e Int) Substitute(name string, value Expression) Expression {
+	return e
+}
+
+func (e Int) Reduce() (Expression, bool) {
+	return e, false
+}
+
+func (e Int) FullReduce() (Expression, bool) {
+	return e, false
+}
+
+type String struct {
+	value string
+}
+
+func (e String) Substitute(name string, value Expression) Expression {
+	return e
+}
+
+func (e String) Reduce() (Expression, bool) {
+	return e, false
+}
+
+func (e String) FullReduce() (Expression, bool) {
+	return e, false
+}
+
+type Name struct {
+	name string
+}
+
+func (e Name) Substitute(name string, value Expression) Expression {
+	if e.name == name {
+		return value
+	}
+	return e
+}
+
+func (e Name) Reduce() (Expression, bool) {
+	return _namespace[e.name], true
+}
+
+func (e Name) FullReduce() (Expression, bool) {
+	expr := _namespace[e.name]
+	expr_reduced, _ := fullReduce(expr)
+	return expr_reduced, true
 }
 
 // Lambda is represented as a pseudo-function: it is applied to the inner expression using function application.
 // This must be taken into account when substituting.
 type Lambda struct {
-	name string
+	name   string
 	strict bool
+
+	// Created due to \x syntax. Stack must be popped again when it is applied due to a closing parenthesis.
+	synthetic bool
 }
 
-/*
-func substitute(tmpl Expression, name string, val Expression) Expression {
-	// TODO: this can be optimized by using string table and free variable bitmap.
-	
-	switch tt := tmpl.(type) {
-	case int64, string, BuiltinFunction, *Bind:
-		return tmpl
-	
-	case *ExternalFuncCall:
-		nargs := make([]Expression, len(tt.args))
-		for i, arg := range tt.args {
-			nargs[i] = substitute(arg, name, val)
-		}
-		return &ExternalFuncCall{tt.args_given, tt.args_remaining, tt.func_name, nargs}
-	
-	case Name:
-		if string(tt) == name {
-			return val
-		} else {
-			return tmpl
-		}
-	
-	case *FunctionApplication:
-		ttt, ok := tt.fnc.(*Bind)
-		if ok && ttt.name == name {
-			return tmpl
-		}
-
-		// TODO: Avoid free variable capture. Depends on constructing free variable set.
-		
-		return &FunctionApplication{substitute(tt.fnc, name, val), substitute(tt.val, name, val)}
-	}
-	
-	panic("missing case")
-}*/
-
-func reduceFunction(fnc, val) (nex Expression, changed bool) {
-	switch fnc := e.fnc.(type) {
-	case int64:
-		// TODO: proper error
-		panic("Function call on int.")
-	case *ExternalFuncCall:
-		// This is a special case, we must append arguments until the expected number is reached.
-	
-		switch val := e.val.(type) {
-		case int64:
-			// compute
-		
-		}
-	case Name:
-	case *Bind:
-	
-	
-	case BuiltinFunction:
-		switch fnc {
-		case _FORCE_EVAL: 
-			return fullReduce(val), true
-		}
-	}
-	e.val
+func (e *Lambda) Substitute(name string, value Expression) Expression {
+	return e
 }
 
-func reduce(ex Expression) (nex Expression, changed bool) {
-	if ex == nil {
-		return ex, false
-	}
-	
-	switch e := ex.(type) {
-	case BuiltinFunction, *Bind, int64, *PartialBinaryOp:
-		// Irreducible
-		return ex, false;
-	case *FunctionApplication:
-		return reduceFunction(e.fnc, e.val)
-	case Name:
-		val, ok := _namespace[string(e)]
-		if !ok {
-			return e, false
-		}
-		return val, true
-	}
+func (e *Lambda) Reduce() (Expression, bool) {
+	return e, false
 }
 
+func (e *Lambda) FullReduce() (Expression, bool) {
+	return e, false
+}
+
+type Application struct {
+	fnc Expression
+	arg Expression
+}
+
+func (e *Application) Substitute(name string, value Expression) Expression {
+	lambda, ok := e.fnc.(*Lambda)
+	if ok {
+		// This is actually a lambda abstraction.
+
+		if lambda.name == name {
+			return e
+		}
+	}
+
+	// TODO: Avoid free variable capture.
+	//   - Construct the set of free variables in the value.
+	//   - Rename all lambdas along the way that match any of the free vars.
+
+	return apply(substitute(e.fnc, name, val), substitute(e.arg, name, val))
+}
+
+func (e *Application) Reduce() (Expression, bool) {
+	// The Application can be reduced in four ways.
+	// Way 1: fnc is an applied lambda (i.e. an application where fnc is Lambda and arg is lambda's body)
+
+	app, ok := e.fnc.(*Application)
+	if ok {
+		lamb, ok := app.fnc.(*Lambda)
+		if ok {
+			if lamb.strict {
+				// Must reduce argument first.
+				narg, ok := reduce(e.arg)
+				if ok {
+					return apply(e.fnc, narg)
+				}
+			} else {
+				a2, ok := e.arg.(*Application)
+				if ok {
+					_, ok := a2.fnc.(ForceEval)
+					if ok {
+						narg, ok := reduce(a2.arg)
+						if ok {
+							return apply(e.fnc, apply(ForceEval{}, narg)), true
+						} else {
+							return apply(e.fnc, narg), true
+						}
+					}
+				}
+			}
+
+			return substitute(app.arg, lamb.name, e.arg), true
+		}
+	}
+
+	// Way 2: fnc is a partial external.
+
+	ext, ok := e.fnc.(*ExternalFuncCall)
+	if ok {
+		if ext.args_given == 0 {
+			// Expecting fully reduced string.
+			narg, ok := reduce(e.arg)
+			if ok {
+				return apply(e.fnc, narg)
+			}
+
+			str := narg.(String).value
+			return &ExternalFuncCall{ext.args_given + 1, 0, str, nil}, true
+		}
+
+		if ext.args_given == 1 {
+			// Expecting fully reduced int.
+			narg, ok := reduce(e.arg)
+			if ok {
+				return apply(e.fnc, narg)
+			}
+
+			i := narg.(Int).value
+			return &ExternalFuncCall{ext.args_given + 1, i, ext.name, nil}, true
+		}
+
+		if ext.args_remaining > 0 {
+			// Process forced evaluation.
+			a2, ok := e.arg.(*Application)
+			if ok {
+				_, ok := a2.fnc.(ForceEval)
+				if ok {
+					narg, ok := reduce(a2.arg)
+					if ok {
+						return apply(e.fnc, apply(ForceEval{}, narg)), true
+					} else {
+						return apply(e.fnc, narg), true
+					}
+				}
+			}
+
+			// Append argument.
+			return &ExternalFuncCall{ext.args_given + 1, ext.args_remaining - 1, ext.name, append(append([]Expression{}, ext.args...), e.arg)}, true
+		}
+	}
+
+	// Way 3: fnc in none of above, but can itself be reduced.
+
+	nfnc, ok := reduce(e.fnc)
+	if ok {
+		return apply(nfnc, e.arg), true
+	}
+
+	// Way 4: fnc is ForceEval or nil, in which case it is treated as identity
+	_, ok = e.fnc.(ForceEval)
+	ok = ok || e.fnc == nil
+	if ok {
+		return e.arg, true
+	}
+
+	// If none of the above hold, and fnc is not Lambda, then this is a bug in the interpreted program.
+
+	_, ok := e.fnc.(*Lambda)
+	if ok {
+		return e, false
+	}
+
+	panic("Cannot reduce function call.")
+}
+
+func (e *Application) FullReduce() (Expression, bool) {
+
+	nfnc, ok := fullReduce(e.fnc)
+
+	_, lambda := e.fnc.(*Lambda)
+	if lambda {
+		return apply(e.fnc, nfnc), ok
+	}
+
+	narg := e.arg
+
+	// Process the strict evaluation bracket.
+	a2, ok := narg.(*Application)
+	if ok {
+		_, ok = a2.fnc.(ForceEval)
+	}
+	if ok {
+		narg, _ = fullReduce(a2.arg)
+	}
+
+	// fnc is ForceEval or nil, in which case it is treated as identity
+	_, ok = nfnc.(ForceEval)
+	ok = ok || nfnc == nil
+	if ok {
+		return narg, true
+	}
+
+	// fnc is an applied lambda (i.e. an application where fnc is Lambda and arg is lambda's body)
+
+	app, ok := nfnc.(*Application)
+	if ok2 {
+		lamb, ok := app.fnc.(*Lambda)
+		if ok {
+			if lamb.strict {
+				narg, _ = fullReduce(narg)
+			}
+
+			red, _ := fullReduce(substitute(app.arg, lamb.name, narg))
+			return red, true
+		}
+	}
+
+	// fnc is a partial external.
+
+	ext, ok := e.fnc.(*ExternalFuncCall)
+	if ok {
+		if ext.args_given == 0 {
+			// Expecting fully reduced string.
+			narg, _ = fullReduce(narg)
+			str := narg.(String).value
+			return &ExternalFuncCall{ext.args_given + 1, 0, str, nil}, true
+		}
+
+		if ext.args_given == 1 {
+			// Expecting fully reduced int.
+			narg, _ := fullReduce(narg)
+			i := narg.(Int).value
+			ext := &ExternalFuncCall{ext.args_given + 1, i, ext.name, nil}
+			red, _ := ext.FullReduce()
+			return red, true
+		}
+
+		if ext.args_remaining > 0 {
+			// Append argument.
+			ext := &ExternalFuncCall{ext.args_given + 1, ext.args_remaining - 1, ext.name, append(append([]Expression{}, ext.args...), e.arg)}
+			red, _ := ext.FullReduce()
+			return red, true
+		}
+	}
+
+	panic("Cannot reduce function call.")
+}
 
 func readNext(r io.Reader) string {
 	sbldr := new(StringBuilder)
-	
+
 	Char()
-	
+
 	sbldr.append()
 }
 
 func interpret(r io.Reader) {
 
-	var current
+	var current Expression
 
 	for {
 		next := readNext(r)
 		if r == "" {
 			break
 		}
-		
+
 		switch next {
 		case ";":
-			seq := applyFunction(&Lambda{"", true}, nil)
-			current = applyFunction(seq, current)
-			
+			current = apply(apply(lambda("", true, false), nil), current)
+
 		case "(":
-			push(current)
+			stk.push(current)
 			current = nil
-			
+
 		case ")":
-			fn := pop()
-				
+			fn := stk.pop()
+
 			current = applyFunction(fn, current)
 
-			for isForceEval(fn) || isBind(fn) {
-				fn = pop()
+			for isForceEval(fn) || isSyntheticLambda(fn) {
+				fn = stk.pop()
 				current = applyFunction(fn, current)
 			}
-			
+
 		case "!(":
-			push(current)
-			push(_FORCE_EVAL)
+			stk.push(current)
+			stk.push(ForceEval{})
 			current = nil
-		
+
 		case "__extern":
-			// TODO
-		
+			current = applyFunction(current, new(ExternalFuncCall))
+
 		default:
-			if next[0] == '\' {
+			switch {
+			case next[0] == '\\':
+				// Emulates parentheses.
 				push(current)
 				if next[1] == '!' {
-					push(bind(next[2:]))
+					push(lambda(next[2:], true, true))
 				} else {
-					push(bind(next[1:]))
+					push(lambda(next[1:], false, true))
 				}
 				current = nil
-			}
-		
-			if isInt(next) {
+
+			case isInt(next):
 				current = applyFunction(current, parseInt(next))
+
+			default:
+				current = applyFunction(current, name(next))
 			}
-			
-			current = applyFunction(current, name(next))
 		}
-	 
-		if emptyStack() {
+
+		if stk.empty() {
 			current = fullReduce(current)
 		}
 	}
