@@ -1,5 +1,9 @@
 package lamb
 
+import (
+	"os"
+)
+
 func externalLoad(ctx *Context, self_name string, args []Expression) Expression {
 	if len(args) != 1 {
 		panic("Bad number of arguments to __load.")
@@ -28,6 +32,6 @@ func externalPrint(ctx *Context, self_name string, args []Expression) Expression
 		panic("Bad number of arguments to __define.")
 	}
 
-	writeTo(args[0], os.Stdout)
+	WriteTo(args[0], os.Stdout)
 	return &ExternalFuncCall{2, 1, self_name, nil}
 }

@@ -1,5 +1,10 @@
 package lamb
 
+import (
+	"io"
+	"strconv"
+)
+
 type String string
 
 func (e String) Apply(arg Expression) (Expression, bool) {
@@ -19,6 +24,5 @@ func (e String) FullReduce(ctx *Context) (Expression, bool) {
 }
 
 func (e String) WriteTo(w Writer) {
-	// FIXME: Escaping.
-	fmt.Fprintf(w, "\"%s\"", string(e))
+	io.WriteString(w, strconv.Quote(string(e)))
 }

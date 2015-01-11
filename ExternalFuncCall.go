@@ -1,5 +1,9 @@
 package lamb
 
+import (
+	"fmt"
+)
+
 type ExternalFuncCall struct {
 	args_given     int
 	args_remaining int
@@ -14,21 +18,21 @@ func NewExternalFuncCall() Expression {
 
 func (e *ExternalFuncCall) Apply(arg Expression) (Expression, bool) {
 
-	if ext.args_given == 0 {
+	if e.args_given == 0 {
 		// Expecting fully reduced string.
-		str := arg.(String).value
+		str := string(arg.(String))
 		return &ExternalFuncCall{e.args_given + 1, 0, str, nil}, true
 	}
 
-	if ext.args_given == 1 {
+	if e.args_given == 1 {
 		// Expecting fully reduced int.
 		i := arg.(Int).value
-		return &ExternalFuncCall{e.args_given + 1, i, e.name, nil}, true
+		return &ExternalFuncCall{e.args_given + 1, int(i), e.func_name, nil}, true
 	}
 
-	if ext.args_remaining > 0 {
+	if e.args_remaining > 0 {
 		// Append argument.
-		return &ExternalFuncCall{e.args_given + 1, e.args_remaining - 1, e.name, append(append([]Expression{}, e.args...), e.arg)}, true
+		return &ExternalFuncCall{e.args_given + 1, e.args_remaining - 1, e.func_name, append(append([]Expression{}, e.args...), arg)}, true
 	}
 
 	// Not applicable, can be reduced.
@@ -36,33 +40,26 @@ func (e *ExternalFuncCall) Apply(arg Expression) (Expression, bool) {
 }
 
 func (e *ExternalFuncCall) Substitute(name string, value Expression) Expression {
-	// TODO: this can be optimized by using string table and free variable bitmap.
-
 	nargs := make([]Expression, len(e.args))
 	for i := range e.args {
-		nargs[i] = substitute(e.args[i], name, val)
+		nargs[i] = Substitute(e.args[i], name, value)
 	}
 	return &ExternalFuncCall{e.args_given, e.args_remaining, e.func_name, nargs}
 }
 
 func (e *ExternalFuncCall) Reduce(ctx *Context) (Expression, bool) {
-	if args_given < 2 || args_remaining > 0 {
+	if e.args_given < 2 || e.args_remaining > 0 {
 		// Incomplete call.
 		return e, false
 	}
 
 	// Complete call.
-	return ctx.Externals[func_name](ctx, func_name, args), true
+	return ctx.Externals[e.func_name](ctx, e.func_name, e.args), true
 }
 
 func (e *ExternalFuncCall) FullReduce(ctx *Context) (Expression, bool) {
-	result, ok := e.Reduce()
-	if ok {
-		reduced_result, _ := fullReduce(ctx, result)
-		return reduced_result, true
-	} else {
-		return e, false
-	}
+	// Coincidentally, here Reduce and FullReduce are the same.
+	return e.Reduce(ctx)
 }
 
 func (e *ExternalFuncCall) WriteTo(w Writer) {
@@ -74,7 +71,7 @@ func (e *ExternalFuncCall) WriteTo(w Writer) {
 	fmt.Fprintf(w, "__external[%d, %d, %s", e.args_given, e.args_remaining, e.func_name)
 	for _, arg := range e.args {
 		fmt.Fprint(w, ", ")
-		writeTo(arg, w)
+		WriteTo(arg, w)
 	}
 	fmt.Fprint(w, "]")
 }

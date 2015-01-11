@@ -1,10 +1,12 @@
 package lamb
 
 import (
+	"fmt"
+	"strconv"
 	"sync/atomic"
 )
 
-var bound uint64
+var bound int64
 
 type Lambda struct {
 	// Name of the bound variable.
@@ -16,7 +18,7 @@ type Lambda struct {
 	body Expression
 }
 
-// We exploit the fact that names in Lamb are not allowed
+// We exploit the fact that names in lamb are not allowed
 // to begin with a number. We substitute the bound name
 // with a numerical name which makes sure that later substitution
 // cannot capture a free variable.
@@ -24,14 +26,14 @@ type Lambda struct {
 // are syntactically within it.
 func NewLambda(name string, strict bool, body Expression) Expression {
 
-	num := fmt.Sprintf("%d", atomic.AddUint64(&bound, 1))
+	num := strconv.FormatInt(atomic.AddInt64(&bound, 1), 10)
 
-	return &Lambda{num, strict, substitute(body, name, Name{num})}
+	return &Lambda{num, strict, Substitute(body, name, Name(num))}
 }
 
 func (e *Lambda) Apply(arg Expression) (Expression, bool) {
 
-	return substitute(e.body, e.name, arg), true
+	return Substitute(e.body, e.name, arg), true
 }
 
 func (e *Lambda) Substitute(name string, value Expression) Expression {
@@ -39,7 +41,7 @@ func (e *Lambda) Substitute(name string, value Expression) Expression {
 		return e
 	}
 
-	return &Lambda{e.name, e.strict, substitute(body, name, value)}
+	return &Lambda{e.name, e.strict, Substitute(e.body, name, value)}
 }
 
 func (e *Lambda) Reduce(ctx *Context) (Expression, bool) {
@@ -57,6 +59,6 @@ func (e *Lambda) WriteTo(w Writer) {
 		fmt.Fprint(w, "\\")
 	}
 	fmt.Fprintf(w, "%s (", e.name)
-	writeTo(e.body, w)
+	WriteTo(e.body, w)
 	fmt.Fprintf(w, ")")
 }

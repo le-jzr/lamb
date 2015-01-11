@@ -1,5 +1,20 @@
 package lamb
 
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"sync"
+	"unicode"
+)
+
+type Writer interface {
+	io.Writer
+}
+
 type ExternalFunc func(ctx *Context, self_name string, args []Expression) Expression
 
 type Context struct {
@@ -13,26 +28,66 @@ func NewContext() *Context {
 	ctx := new(Context)
 	ctx.Externals = make(map[string]ExternalFunc)
 	ctx.namespace = make(map[string]Expression)
+
+	ctx.Externals["__load"] = externalLoad
+	ctx.Externals["__define"] = externalDefine
+	ctx.Externals["__print"] = externalPrint
+
+	ctx.namespace["__load"] = &ExternalFuncCall{2, 1, "__load", nil}
+	ctx.namespace["__define"] = &ExternalFuncCall{2, 2, "__define", nil}
+	ctx.namespace["__print"] = &ExternalFuncCall{2, 1, "__print", nil}
+	return ctx
 }
 
 func (ctx *Context) Get(name string) Expression {
-	ns_lock.Lock()
-	defer ns_lock.Unlock()
+	ctx.ns_lock.Lock()
+	defer ctx.ns_lock.Unlock()
 	return ctx.namespace[name]
 }
 
 func (ctx *Context) Set(name string, exp Expression) {
-	ns_lock.Lock()
-	defer ns_lock.Unlock()
+	ctx.ns_lock.Lock()
+	defer ctx.ns_lock.Unlock()
 	ctx.namespace[name] = exp
 }
 
-func readNext(r *bufio.Reader) string {
-	sbldr := new(StringBuilder)
+// Used to split the stream on spaces, parentheses and semicolons.
+func readNext(r *bufio.Reader) (string, error) {
+	buf := new(bytes.Buffer)
 
-	Char()
+	for {
+		c, _, err := r.ReadRune()
+		if err != nil {
+			return buf.String(), err
+		}
 
-	sbldr.append()
+		if !unicode.IsSpace(c) {
+			r.UnreadRune()
+			break
+		}
+	}
+
+	for {
+		c, _, err := r.ReadRune()
+		if err != nil || unicode.IsSpace(c) {
+			return buf.String(), err
+		}
+
+		if c == ';' || c == '(' || c == ')' {
+			str := buf.String()
+			if c == '(' && str == "!" {
+				return "!(", nil
+			}
+
+			if buf.Len() == 0 {
+				return fmt.Sprintf("%c", c), nil
+			}
+			r.UnreadRune()
+			return buf.String(), nil
+		}
+
+		buf.WriteRune(c)
+	}
 }
 
 func ParseExpression(r io.Reader, interactive_ctx *Context, debugTrace bool) Expression {
@@ -44,23 +99,28 @@ func ParseExpression(r io.Reader, interactive_ctx *Context, debugTrace bool) Exp
 	var current Expression
 
 	for {
-		next := readNext(buffered)
+		next, err := readNext(buffered)
+		if err != nil {
+			// TODO: error handling
+			break
+		}
+
 		if next == "" {
 			break
 		}
 
-		switch next {
+		switch {
 		case next == ";":
-			current = NewApplication(lambda("", true, false, nil), current)
+			current = NewApplication(NewLambda("", true, nil), current)
 
 		case next == "(":
-			current = NewApplication(current, parseExpression(buffered, nil, false))
+			current = NewApplication(current, ParseExpression(buffered, nil, false))
 
 		case next == ")":
 			return current
 
 		case next == "!(":
-			current = NewApplication(current, ForceEval{parseExpression(buffered, nil, false)})
+			current = NewApplication(current, ForceEval{ParseExpression(buffered, nil, false)})
 
 		case next == "__extern":
 			current = NewApplication(current, NewExternalFuncCall())
@@ -73,16 +133,21 @@ func ParseExpression(r io.Reader, interactive_ctx *Context, debugTrace bool) Exp
 			if strict {
 				name = name[1:]
 			}
-			return NewApplication(current, NewLambda(name, strict, parseExpression(buffered, nil, false)))
+			return NewApplication(current, NewLambda(name, strict, ParseExpression(buffered, nil, false)))
 
-		case isInt(next):
-			current = NewApplication(current, parseInt(next))
+		case unicode.IsDigit(rune(next[0])):
+			i, err := strconv.ParseInt(next, 0, 64)
+			if err != nil {
+				// TODO: error handling
+			}
+			current = NewApplication(current, Int{i})
 
-		case isString(next):
-			// Indicated by leaving the initial quote in place.
-			// Other than that, the string is already unescaped.
-
-			current = NewApplication(current, String(next[1:]))
+		case next[0] == '"':
+			s, err := strconv.Unquote(next)
+			if err != nil {
+				// TODO: error handling
+			}
+			current = NewApplication(current, String(s))
 
 		default:
 			// Probably a name, then.
@@ -97,7 +162,10 @@ func ParseExpression(r io.Reader, interactive_ctx *Context, debugTrace bool) Exp
 			// we can apply an argument is irreducible.
 
 			if !debugTrace {
-				current = fullReduce(ctx, current)
+				repeat := true
+				for repeat {
+					current, repeat = FullReduce(interactive_ctx, current)
+				}
 			} else {
 				// Debug trace!
 				//
@@ -105,17 +173,17 @@ func ParseExpression(r io.Reader, interactive_ctx *Context, debugTrace bool) Exp
 				// the result, until the expression is
 				// completely reduced.
 
-				writeTo(current, os.Stderr)
+				WriteTo(current, os.Stderr)
 				os.Stderr.Write([]byte{'\n'})
 
 				for {
 					var ok bool
-					current, ok = reduce(ctx, current)
+					current, ok = Reduce(interactive_ctx, current)
 					if !ok {
 						break
 					}
 
-					writeTo(current, os.Stderr)
+					WriteTo(current, os.Stderr)
 					os.Stderr.Write([]byte{'\n'})
 				}
 			}

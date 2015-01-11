@@ -1,7 +1,11 @@
 package lamb
 
+import (
+	"fmt"
+)
+
 type Int struct {
-	value uint64
+	value int64
 }
 
 func (e Int) Apply(arg Expression) (Expression, bool) {
@@ -24,10 +28,7 @@ func (e Int) WriteTo(w Writer) {
 	fmt.Fprintf(w, "%d", e.value)
 }
 
-func parseInt(s string) Int {
-	// TODO
-}
-
+/*
 func externalAddInt(args ...[]Expression) Expression {
 	// TODO
 }
@@ -43,3 +44,4 @@ func externalMulInt(args ...[]Expression) Expression {
 func externalDivInt(args ...[]Expression) Expression {
 	// TODO
 }
+*/

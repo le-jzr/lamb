@@ -1,6 +1,6 @@
 package lamb
 
-type application struct {
+type Application struct {
 	fnc Expression
 	arg Expression
 }
@@ -9,25 +9,25 @@ func NewApplication(fnc, arg Expression) Expression {
 	if fnc == nil {
 		return arg
 	}
-	return &application{fnc, arg}
+	return &Application{fnc, arg}
 }
 
-func (e *application) Apply(arg Expression) (Expression, bool) {
+func (e *Application) Apply(arg Expression) (Expression, bool) {
 	// Unreduced application cannot take argument.
 	return nil, false
 }
 
-func (e *application) Substitute(name string, value Expression) Expression {
-	return &application{substitute(e.fnc, name, val), substitute(e.arg, name, val)}
+func (e *Application) Substitute(name string, value Expression) Expression {
+	return &Application{Substitute(e.fnc, name, value), Substitute(e.arg, name, value)}
 }
 
-func (e *application) Reduce(ctx *Context) (Expression, bool) {
+func (e *Application) Reduce(ctx *Context) (Expression, bool) {
 	// This depends on the assumption that an applicable expression
 	// is not reducible.
 
-	nfnc, ok := reduce(ctx, e.fnc)
+	nfnc, ok := Reduce(ctx, e.fnc)
 	if ok {
-		return &application{nfnc, e.arg}, true
+		return &Application{nfnc, e.arg}, true
 	}
 
 	// Special case #1: function is a strict lambda.
@@ -37,19 +37,19 @@ func (e *application) Reduce(ctx *Context) (Expression, bool) {
 
 	// Special case #2: argument is a forced evaluation bracket.
 
-	_, forced := e.arg.(forceEval)
+	_, forced := e.arg.(ForceEval)
 	strict = strict || forced
 
 	if strict {
-		narg, ok := reduce(ctx, e.arg())
+		narg, ok := Reduce(ctx, e.arg)
 		if ok {
-			return &application{e.fnc, narg}, true
+			return &Application{e.fnc, narg}, true
 		}
 	}
 
 	// Common case: apply the argument.
 
-	result, ok := apply(e.fnc, e.arg)
+	result, ok := Apply(e.fnc, e.arg)
 	if !ok {
 		// TODO: print error or something
 		return e, false
@@ -57,20 +57,24 @@ func (e *application) Reduce(ctx *Context) (Expression, bool) {
 	return result, ok
 }
 
-func (e *application) FullReduce(ctx *Context) (Expression, bool) {
+func (e *Application) FullReduce(ctx *Context) (Expression, bool) {
 	// This depends on the assumption that an applicable expression
-	// is not reducible.
+	// is not reducible further.
 
-	nfnc, _ := fullReduce(ctx, e.fnc)
+	nfnc := e.fnc
+	repeat := true
+	for repeat {
+		nfnc, repeat = FullReduce(ctx, nfnc)
+	}
 
 	// Special case #1: function is a strict lambda.
 
-	lmb, is_lambda := nfnc.(*lambda)
+	lmb, is_lambda := nfnc.(*Lambda)
 	strict := is_lambda && lmb.strict
 
 	// Special case #2: argument is a forced evaluation bracket.
 
-	_, forced := e.arg.(forceEval)
+	_, forced := e.arg.(ForceEval)
 	strict = strict || forced
 
 	// Reduce the argument if necessary.
@@ -78,36 +82,40 @@ func (e *application) FullReduce(ctx *Context) (Expression, bool) {
 	narg := e.arg
 
 	if strict {
-		narg, _ := fullReduce(ctx, e.arg)
+		repeat = true
+		for repeat {
+			narg, repeat = FullReduce(ctx, narg)
+		}
 	}
 
 	// Apply the argument.
 
-	result, ok := apply(nfnc, narg)
+	result, ok := Apply(nfnc, narg)
 	if !ok {
 		// TODO: print error or something
-		return &application{nfnc, narg}, true
+		return &Application{nfnc, narg}, false
 	}
 
-	// Reduce the result.
+	// DO NOT reduce the result.
+	// Just tell caller to repeat fullReduce.
+	// If we reduced here, recursive calls could consume
+	// unbounded amount of stack.
 
-	reduced, _ := fullReduce(ctx, result)
-
-	return reduced, true
+	return result, true
 }
 
-func (e *application) WriteTo(w Writer) {
-	writeTo(e.fnc, w)
+func (e *Application) WriteTo(w Writer) {
+	WriteTo(e.fnc, w)
 	w.Write([]byte{' '})
 
 	// Special case to inject parentheses around application-as-argument.
-	_, is_app := e.arg.(*application)
+	_, is_app := e.arg.(*Application)
 
 	if is_app {
 		w.Write([]byte{'('})
-		writeTo(e.arg, w)
+		WriteTo(e.arg, w)
 		w.Write([]byte{')'})
 	} else {
-		writeTo(e.arg, w)
+		WriteTo(e.arg, w)
 	}
 }

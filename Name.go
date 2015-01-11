@@ -18,9 +18,10 @@ func (e Name) Reduce(ctx *Context) (Expression, bool) {
 }
 
 func (e Name) FullReduce(ctx *Context) (Expression, bool) {
-	expr := ctx.Get(string(e))
-	expr_reduced, _ := fullReduce(expr)
-	return expr_reduced, true
+	// Deliberately not reducing further.
+	// This way, we do not consume unbounded memory
+	// in define-based tail recursion.
+	return ctx.Get(string(e)), true
 }
 
 func (e Name) WriteTo(w Writer) {

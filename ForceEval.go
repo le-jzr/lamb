@@ -11,11 +11,11 @@ func (e ForceEval) Apply(arg Expression) (Expression, bool) {
 }
 
 func (e ForceEval) Substitute(name string, value Expression) Expression {
-	return ForceEval{substitute(e.body, name, value)}
+	return ForceEval{Substitute(e.body, name, value)}
 }
 
 func (e ForceEval) Reduce(ctx *Context) (Expression, bool) {
-	reduced, ok := reduce(ctx, e.body)
+	reduced, ok := Reduce(ctx, e.body)
 	if ok {
 		return ForceEval{reduced}, true
 	}
@@ -24,12 +24,11 @@ func (e ForceEval) Reduce(ctx *Context) (Expression, bool) {
 }
 
 func (e ForceEval) FullReduce(ctx *Context) (Expression, bool) {
-	reduced, _ := fullReduce(e.body)
-	return reduced, true
+	return FullReduce(ctx, e.body)
 }
 
 func (e ForceEval) WriteTo(w Writer) {
 	w.Write([]byte{'!', '('})
-	writeTo(e.body, w)
+	WriteTo(e.body, w)
 	w.Write([]byte{')'})
 }
