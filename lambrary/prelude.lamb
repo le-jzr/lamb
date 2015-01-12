@@ -13,8 +13,8 @@ define "ite" (\x \y \z x y z);
 define "cons" (\x \y (pair true (pair x y)));
 define "nil" !(pair false ());
 define "is_nil" !(fst);
-define "head" (\x __fst (__snd x));
-define "tail" (\x __snd (__snd x));
+define "head" (\x fst (snd x));
+define "tail" (\x snd (snd x));
 
 define "load" !(__extern "__load" 1);
 
